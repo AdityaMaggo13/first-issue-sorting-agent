@@ -110,10 +110,10 @@ const DEFAULT_REPOS: string[] = [
   "typescript-eslint/typescript-eslint"
 ];
 
-function getRelevantRepos(skills: string, interest: string): string[] {
+function getRelevantRepos(skills: string, interest: string): { skillRepos: string[], interestRepos: string[] } {
   const skillRepos: string[] = [];
   const interestRepos: string[] = [];
-  
+
   // Parse skills and extract relevant repos
   const skillsLower = skills.toLowerCase();
   Object.entries(SKILL_TO_REPOS).forEach(([skill, repos]) => {
@@ -121,7 +121,7 @@ function getRelevantRepos(skills: string, interest: string): string[] {
       skillRepos.push(...repos);
     }
   });
-  
+
   // Parse interest and extract relevant repos
   const interestLower = interest.toLowerCase();
   Object.entries(INTEREST_TO_REPOS).forEach(([interestKey, repos]) => {
@@ -129,12 +129,8 @@ function getRelevantRepos(skills: string, interest: string): string[] {
       interestRepos.push(...repos);
     }
   });
-  
-  // Combine and deduplicate
-  const allRepos = [...new Set([...skillRepos, ...interestRepos, ...DEFAULT_REPOS])];
-  
-  // Limit to 10 repos per request
-  return allRepos.slice(0, 10);
+
+  return { skillRepos, interestRepos };
 }
 
 async function fetchRepoInfo(fullName: string, token: string): Promise<RepoInfo | null> {
@@ -306,125 +302,61 @@ export async function POST(request: Request) {
       );
     }
 
-    // Get dynamic repo list based on skills and interest
-    const selectedRepos = getRelevantRepos(skills, interest);
-    console.log("SELECTED REPOS:", selectedRepos);
+    const { skillRepos, interestRepos } = getRelevantRepos(skills, interest);
 
-    // Fetch repo info to filter by quality
-    const repoInfos = await Promise.all(
-      selectedRepos.map(fullName => fetchRepoInfo(fullName, githubToken))
-    );
-    
-    const validRepos = filterReposByQuality(repoInfos.filter(Boolean) as RepoInfo[]);
-    console.log("VALID REPOS AFTER FILTERING:", validRepos.length);
-
-    if (validRepos.length === 0) {
-      return NextResponse.json({
-        issues: [],
-        message: "No repositories found matching your criteria.",
-      });
-    }
-
-    // Fetch issues for valid repos
-    const allIssuesArrays = await Promise.all(
-      validRepos.map(repo => fetchIssuesForRepo(repo.full_name, githubToken))
+    // --- Combine and dedupe ---
+    const allRepos = Array.from(
+      new Set([
+        ...(skillRepos ?? []),
+        ...(interestRepos ?? []),
+        ...(DEFAULT_REPOS ?? []),
+      ])
     );
 
-    const allIssues = allIssuesArrays.flat();
-    console.log("TOTAL RAW ISSUES COUNT:", allIssues.length);
-
-    if (allIssues.length === 0) {
-      return NextResponse.json({
-        issues: [],
-        message: "No issues found for the selected repositories.",
-      });
+    // --- Shuffle (Fisher-Yates) ---
+    for (let i = allRepos.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [allRepos[i], allRepos[j]] = [allRepos[j], allRepos[i]];
     }
 
-    // Process issues to required format
-    const processedIssues: ProcessedIssue[] = allIssues.map(issue => ({
+    // --- Limit to 10 repos ---
+    const selectedRepos = allRepos.slice(0, 10);
+
+    // Add a debug log so we can inspect what was chosen when running locally:
+    console.info("DEBUG selectedRepos:", selectedRepos);
+
+    // When fetching issues, ensure you collect issues per repo and limit to 1 issue per repo.
+    // Example (replace your existing fetch loop with this pattern):
+
+    const allIssues: GitHubIssue[] = [];
+    for (const repo of selectedRepos) {
+      try {
+        const issues = await fetchIssuesForRepo(repo, githubToken); // reuse your existing fetch function
+        if (Array.isArray(issues) && issues.length > 0) {
+          // push only the first issue for this repo to avoid duplicates across repos
+          allIssues.push(issues[0]);
+        }
+      } catch (err) {
+        console.warn(`failed to fetch issues for ${repo}`, err);
+      }
+    }
+
+    // final returned payload
+    const finalOutput = allIssues.map(issue => ({
+      id: issue.number,
       title: issue.title,
       html_url: issue.html_url,
       repo_name: issue.repository_url?.split('/').pop() || 'unknown',
       labels: (issue.labels || []).map(l => l.name),
       reactions: issue.reactions?.total_count || 0,
-      comments: issue.comments || 0,
-      repo_stars: validRepos.find(r => r.full_name === issue.repository_url?.split('/').slice(-2).join('/'))?.stars || 0
+      comments: issue.comments || 0
     }));
-
-    // Deduplicate issues
-    const uniqueIssues = deduplicateIssues(processedIssues);
-    console.log("UNIQUE ISSUES COUNT:", uniqueIssues.length);
-
-    // Filter by level
-    const filteredIssues = filterIssuesByLevel(uniqueIssues, level);
-    console.log("FILTERED BY LEVEL COUNT:", filteredIssues.length);
-
-    if (filteredIssues.length === 0) {
-      return NextResponse.json({
-        issues: [],
-        message: "No issues found matching your skill level.",
-      });
-    }
-
-    // Calculate final scores for deterministic ranking
-    const scoredIssues = filteredIssues.map(calculateFinalScore);
-
-    // Shuffle after filtering but before slicing
-    const shuffled = [...scoredIssues].sort(() => Math.random() - 0.5);
-
-    // Sort by final score (highest first)
-    const rankedIssues = shuffled.sort((a, b) => b.finalScore - a.finalScore);
-
-    // Return top 15 issues
-    const topIssues = rankedIssues.slice(0, 15);
-
-    const finalOutput = topIssues.map(issue => ({
-      title: issue.title,
-      html_url: issue.html_url,
-      repo_name: issue.repo_name,
-      labels: issue.labels,
-      reactions: issue.reactions,
-      comments: issue.comments
-    }));
-
-    console.log("FINAL OUTPUT COUNT:", finalOutput.length);
 
     return NextResponse.json({ issues: finalOutput });
 
   } catch (err) {
     console.error("Error in /api/recommend:", err);
-    
-    // Fallback: return top 15 issues by basic popularity if any failure occurs
-    try {
-      const fallbackResponse = await fetch("https://api.github.com/repos/facebook/react/issues?state=open&per_page=15", {
-        headers: {
-          Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-          "User-Agent": "first-issue-finder",
-          Accept: "application/vnd.github+json",
-        },
-        cache: "no-store",
-      });
-      
-      if (fallbackResponse.ok) {
-        const fallbackData = await fallbackResponse.json();
-        const fallbackIssues = fallbackData
-          .filter((item: any) => !item.pull_request)
-          .slice(0, 15)
-          .map((item: any) => ({
-            title: item.title,
-            html_url: item.html_url,
-            repo_name: "facebook/react",
-            labels: Array.isArray(item.labels) ? item.labels.map((l: any) => l.name) : [],
-            reactions: item.reactions?.total_count || 0,
-            comments: item.comments || 0
-          }));
-          
-        return NextResponse.json({ issues: fallbackIssues });
-      }
-    } catch (fallbackErr) {
-      console.error("Fallback failed:", fallbackErr);
-    }
-    
+
     return NextResponse.json(
       {
         issues: [],

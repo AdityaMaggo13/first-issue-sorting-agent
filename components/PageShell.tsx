@@ -21,10 +21,10 @@ export function PageShell({ children }: PageShellProps) {
             </span>
           </div>
           <a
-            href="https://github.com/"
+            href="https://github.com/AdityaMaggo13/first-issue-sorting-agent"
             target="_blank"
-            rel="noreferrer"
-            className="text-xs font-medium text-slate-500 hover:text-slate-900"
+            rel="noopener noreferrer"
+            className="text-sm font-medium text-blue-600 hover:text-blue-700"
           >
             View on GitHub →
           </a>

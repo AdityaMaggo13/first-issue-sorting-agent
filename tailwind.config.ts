@@ -60,6 +60,9 @@ const config: Config = {
         '2xl': '1rem',
         '3xl': '1.5rem',
       },
+      gridAutoRows: {
+        'fr': 'minmax(0, 1fr)',
+      },
     },
   },
   plugins: [],

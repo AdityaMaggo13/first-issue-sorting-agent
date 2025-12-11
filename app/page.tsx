@@ -3,9 +3,10 @@
 import { useState } from 'react'
 import { PageShell } from '@/components/PageShell'
 import { Hero, type HeroValues } from '@/components/Hero'
-import { IssueCard } from '@/components/IssueCard'
+import IssueCard from '@/components/IssueCard'
 
 interface Issue {
+  id: number
   title: string
   html_url: string
   repo_name: string
@@ -112,7 +113,7 @@ export default function Home() {
 
         {/* Loading skeleton */}
         {loading && (
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-3 auto-rows-fr items-stretch">
             {[...Array(6)].map((_, i) => (
               <div key={i} className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
                 <div className="animate-pulse">
@@ -143,10 +144,11 @@ export default function Home() {
 
         {/* Issues grid */}
         {issues.length > 0 && !loading && (
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {issues.map((issue, index) => (
+          <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-3 auto-rows-fr items-stretch">
+            {issues.map(issue => (
               <IssueCard
-                key={`${issue.title}-${index}`}
+                key={issue.id.toString()}
+                id={issue.id}
                 title={issue.title}
                 url={issue.html_url}
                 repo_name={issue.repo_name}
